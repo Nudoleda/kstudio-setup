@@ -64,6 +64,10 @@ setup_ksterm() {
   cat > "$BIN_DIR/ksterm" <<'EOF'
 #!/usr/bin/env bash
 # KStudio bridge server — usage: ksterm  (then Verify in the app)
+if pgrep -f ksterm.jar >/dev/null 2>&1; then
+  echo "[KStudio] ksterm already running on port ${KSTERM_PORT:-8767} — open the app and Verify."
+  exit 0
+fi
 export KSTERM_TOKEN="$(cat ~/.kstudio/token 2>/dev/null)"
 export KSTERM_PORT="${KSTERM_PORT:-8767}"
 exec java -jar ~/.kstudio/ksterm.jar "$@"
