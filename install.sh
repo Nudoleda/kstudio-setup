@@ -28,6 +28,22 @@ setup_base() {
 }
 
 setup_lang() {
+  if [ "$PLATFORM" = "macos" ]; then
+    case "$1" in
+      python) brew install python pyright 2>/dev/null; pip3 install --upgrade pyright debugpy ruff 2>/dev/null || true ;;
+      node) brew install node 2>/dev/null; npm i -g typescript typescript-language-server vscode-langservers-extracted 2>/dev/null || true ;;
+      rust) brew install rust rust-analyzer 2>/dev/null || true ;;
+      go) brew install go gopls delve 2>/dev/null || true ;;
+      java) brew install openjdk@17 jdtls 2>/dev/null || true ;;
+      kotlin) brew install kotlin kotlin-language-server 2>/dev/null || true ;;
+      c|cpp) brew install llvm clang-format 2>/dev/null || true ;;
+      dart) brew install dart 2>/dev/null || true ;;
+      html) npm i -g vscode-langservers-extracted 2>/dev/null || true ;;
+      bash) brew install bash shellcheck 2>/dev/null; npm i -g bash-language-server 2>/dev/null || true ;;
+      php) brew install php 2>/dev/null; npm i -g intelephense 2>/dev/null || true ;;
+    esac
+    return
+  fi
   case "$1" in
     python) pkg install -y python pyright 2>/dev/null || sudo apt-get install -y python3 pyright 2>/dev/null || true
       pip install --upgrade pyright debugpy ruff 2>/dev/null || pip3 install --upgrade pyright debugpy ruff 2>/dev/null || true ;;
@@ -50,17 +66,28 @@ setup_ksterm() {
   KSTERM_JAR="$HOME/.kstudio/ksterm.jar"
   if [ ! -f "$KSTERM_JAR" ]; then
     echo "[KStudio] downloading ksterm.jar"
-    curl -fL -o "$KSTERM_JAR" "https://github.com/$REPO/releases/latest/download/ksterm.jar" \
-      || echo "manual: build :ksterm:fatJar and copy ksterm.jar to ~/.kstudio/"
+    # atomic: partial downloads never masquerade as a valid jar
+    if curl -fL -o "$KSTERM_JAR.tmp" "https://github.com/$REPO/releases/latest/download/ksterm.jar"; then
+      mv "$KSTERM_JAR.tmp" "$KSTERM_JAR"
+    else
+      rm -f "$KSTERM_JAR.tmp"
+      echo "manual: build :ksterm:fatJar and copy ksterm.jar to ~/.kstudio/"
+    fi
   fi
-  if [ ! -f ~/.kstudio/token ]; then head -c 32 /dev/urandom | base64 > ~/.kstudio/token; fi
+  if [ ! -f ~/.kstudio/token ]; then ( umask 077; head -c 32 /dev/urandom | base64 > ~/.kstudio/token ); chmod 600 ~/.kstudio/token; fi
   export KSTERM_TOKEN=$(cat ~/.kstudio/token); export KSTERM_PORT=8767
-  cp ./ksterm/ks-exthost.js ~/.kstudio/ks-exthost.js 2>/dev/null || \
+  cp ./ksterm/ks-exthost.js ~/.kstudio/ks-exthost.js 2>/dev/null || true
+  SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+  if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/ksterm/ks-exthost.js" ]; then
+    cp "$SCRIPT_DIR/ksterm/ks-exthost.js" ~/.kstudio/ks-exthost.js
+  else
     curl -fsSL "https://raw.githubusercontent.com/$REPO/main/ksterm/ks-exthost.js" -o ~/.kstudio/ks-exthost.js 2>/dev/null || true
+  fi
   # 'ksterm' launcher on PATH — type ksterm in Termux, exactly like dsterm
-  BIN_DIR="$PREFIX/bin"
-  if [ "$PLATFORM" = "linux" ]; then BIN_DIR="$HOME/.local/bin"; mkdir -p "$BIN_DIR"; fi
-  if [ "$PLATFORM" = "macos" ]; then BIN_DIR="/usr/local/bin"; fi
+  if [ "$PLATFORM" = "termux" ]; then BIN_DIR="${PREFIX}/bin"
+  elif [ "$PLATFORM" = "macos" ]; then BIN_DIR="/usr/local/bin"
+  else BIN_DIR="$HOME/.local/bin"; mkdir -p "$BIN_DIR"
+  fi
   cat > "$BIN_DIR/ksterm" <<'EOF'
 #!/usr/bin/env bash
 # KStudio bridge server — usage: ksterm  (then Verify in the app)
@@ -74,9 +101,17 @@ exec java -jar ~/.kstudio/ksterm.jar "$@"
 EOF
   chmod +x "$BIN_DIR/ksterm" 2>/dev/null || sudo cp "$BIN_DIR/ksterm" /usr/local/bin/ksterm 2>/dev/null || true
   echo "[KStudio] starting ksterm..."
-  pkill -f ksterm.jar 2>/dev/null || true
+  pkill -f "[k]sterm\.jar" 2>/dev/null || true
   nohup java -jar "$KSTERM_JAR" >/dev/null 2>&1 &
-  sleep 1
+  # wait for the port instead of a blind sleep: no more transient Verify failures
+  for i in $(seq 1 15); do
+    if curl -fsS -m 2 "http://127.0.0.1:${KSTERM_PORT:-8767}/health" >/dev/null 2>&1; then
+      echo "[KStudio] bridge is up."
+      break
+    fi
+    sleep 1
+    if [ "$i" = "15" ]; then echo "[KStudio] WARNING: bridge not responding yet — try: ksterm"; fi
+  done
 }
 
 case "${1:-}" in
